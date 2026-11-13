@@ -8403,7 +8403,7 @@ function EditPrinterModal({
                   onChange={(e) =>
                     setForm({
                       ...form,
-                      preferred_slicer: (e.target.value || null) as Printer['preferred_slicer'],
+                      preferred_slicer: (e.target.value || null) as 'bambu_studio' | 'orcaslicer' | null,
                     })
                   }
                   className="w-full px-3 py-2 pr-10 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"

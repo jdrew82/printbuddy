@@ -26,7 +26,8 @@ export function SlicerBundlesPanel() {
 
   const { data: bundles, isLoading } = useQuery({
     queryKey: ['slicer-bundles'],
-    queryFn: api.listSlicerBundles,
+    // Wrap so React Query's QueryFunctionContext isn't passed as the opts arg.
+    queryFn: () => api.listSlicerBundles(),
   });
 
   const importMutation = useMutation({
