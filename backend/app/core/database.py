@@ -1912,6 +1912,9 @@ async def run_migrations(conn):
     # Migration: Configure backend recovery for active offline printers.
     await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN reconnect_interval_seconds INTEGER DEFAULT 30 NOT NULL")
 
+    # Migration: Per-printer preferred slicer (bambu_studio | orcaslicer | NULL)
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN preferred_slicer VARCHAR(20)")
+
     # Migration: Add REST/Webhook smart plug fields
     await _safe_execute(conn, "ALTER TABLE smart_plugs ADD COLUMN rest_on_url VARCHAR(500)")
     await _safe_execute(conn, "ALTER TABLE smart_plugs ADD COLUMN rest_on_body TEXT")

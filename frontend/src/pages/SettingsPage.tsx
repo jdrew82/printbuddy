@@ -4774,7 +4774,10 @@ export function SettingsPage() {
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray pointer-events-none" />
                 </div>
                 <p className="text-xs text-bambu-gray mt-1">
-                  {t('settings.preferredSlicerDescription')}
+                  {t(
+                    'settings.preferredSlicerDescription',
+                    'Global default slicer for Slice actions. Individual printers and the Slice modal can override this.',
+                  )}
                 </p>
                 {/* Which sidecar fits which printer. Bambu Studio ships profiles
                     for Bambu Lab printers (incl. the newest, e.g. X2D) but few
@@ -4812,38 +4815,37 @@ export function SettingsPage() {
                 </label>
               </div>
               {(localSettings.use_slicer_api ?? false) && (
-                <div>
-                  <label className="block text-sm text-bambu-gray mb-1">
-                    {(localSettings.preferred_slicer ?? 'bambu_studio') === 'orcaslicer'
-                      ? t('settings.orcaslicerApiUrl', 'OrcaSlicer sidecar URL')
-                      : t('settings.bambuStudioApiUrl', 'Bambu Studio sidecar URL')}
-                  </label>
-                  <input
-                    type="text"
-                    value={
-                      ((localSettings.preferred_slicer ?? 'bambu_studio') === 'orcaslicer'
-                        ? localSettings.orcaslicer_api_url
-                        : localSettings.bambu_studio_api_url) ?? ''
-                    }
-                    onChange={(e) =>
-                      updateSetting(
-                        (localSettings.preferred_slicer ?? 'bambu_studio') === 'orcaslicer'
-                          ? 'orcaslicer_api_url'
-                          : 'bambu_studio_api_url',
-                        e.target.value,
-                      )
-                    }
-                    placeholder={
-                      (localSettings.preferred_slicer ?? 'bambu_studio') === 'orcaslicer'
-                        ? 'http://localhost:3003'
-                        : 'http://localhost:3001'
-                    }
-                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none placeholder:text-bambu-gray/40"
-                  />
-                  <p className="text-xs text-bambu-gray mt-1">
+                <div className="space-y-3">
+                  <div>
+                    <label htmlFor="bambu-studio-api-url" className="block text-sm text-bambu-gray mb-1">
+                      {t('settings.bambuStudioApiUrl', 'Bambu Studio sidecar URL')}
+                    </label>
+                    <input
+                      id="bambu-studio-api-url"
+                      type="text"
+                      value={localSettings.bambu_studio_api_url ?? ''}
+                      onChange={(e) => updateSetting('bambu_studio_api_url', e.target.value)}
+                      placeholder="http://localhost:3001"
+                      className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none placeholder:text-bambu-gray/40"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="orcaslicer-api-url" className="block text-sm text-bambu-gray mb-1">
+                      {t('settings.orcaslicerApiUrl', 'OrcaSlicer sidecar URL')}
+                    </label>
+                    <input
+                      id="orcaslicer-api-url"
+                      type="text"
+                      value={localSettings.orcaslicer_api_url ?? ''}
+                      onChange={(e) => updateSetting('orcaslicer_api_url', e.target.value)}
+                      placeholder="http://localhost:3003"
+                      className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none placeholder:text-bambu-gray/40"
+                    />
+                  </div>
+                  <p className="text-xs text-bambu-gray">
                     {t(
                       'settings.slicerApiUrlDescription',
-                      'URL of the slicer-API sidecar container. Leave blank to use the SLICER_API_URL / BAMBU_STUDIO_API_URL env var defaults.',
+                      'Both sidecars can run at once. Leave a URL blank to use the BAMBU_STUDIO_API_URL / SLICER_API_URL env defaults. Connection test uses the global preferred slicer above.',
                     )}
                   </p>
                   <Button
@@ -4852,7 +4854,6 @@ export function SettingsPage() {
                     size="sm"
                     onClick={handleTestSlicerConnection}
                     disabled={slicerConnectionTesting}
-                    className="mt-3"
                   >
                     {slicerConnectionTesting && <Loader2 className="w-4 h-4 animate-spin" />}
                     {slicerConnectionTesting

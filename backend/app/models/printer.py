@@ -24,6 +24,9 @@ class Printer(Base):
     nozzle_count: Mapped[int] = mapped_column(default=1)  # 1 or 2, auto-detected from MQTT
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_archive: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Which slicer-api engine to prefer for this printer when Use Slicer API
+    # is on. None ⇒ fall back to the global preferred_slicer setting.
+    preferred_slicer: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Retry active offline printers from the backend, independent of an open browser tab.
     reconnect_interval_seconds: Mapped[int] = mapped_column(default=30)
     print_hours_offset: Mapped[float] = mapped_column(Float, default=0.0)  # Baseline hours to add

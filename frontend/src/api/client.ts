@@ -290,6 +290,8 @@ export interface Printer {
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
   is_active: boolean;
   auto_archive: boolean;
+  /** Per-printer slicer override; null/undefined ⇒ use Settings preferred_slicer. */
+  preferred_slicer?: 'bambu_studio' | 'orcaslicer' | null;
   reconnect_interval_seconds?: number;
   external_camera_url: string | null;
   external_camera_type: string | null;  // "mjpeg", "rtsp", "snapshot"
@@ -535,6 +537,7 @@ export interface PrinterCreate {
   model?: string;
   location?: string;
   auto_archive?: boolean;
+  preferred_slicer?: 'bambu_studio' | 'orcaslicer' | null;
   reconnect_interval_seconds?: number;
   external_camera_url?: string | null;
   external_camera_type?: string | null;
@@ -1717,6 +1720,10 @@ export interface SliceRequest {
   // "Textured PEI Plate", "Smooth PEI Plate", "Cool Plate (SuperTack)",
   // "Supertack Plate".
   bed_type?: string | null;
+  /** Override which slicer-api sidecar runs this job. */
+  slicer?: 'bambu_studio' | 'orcaslicer' | null;
+  /** Fleet printer whose preferred_slicer applies when slicer is omitted. */
+  printer_id?: number | null;
 }
 
 // GET /api/v1/slicer/bundles — Printer Preset Bundles imported from
@@ -4898,6 +4905,10 @@ export const api = {
       process_name: string;
       filament_names: string[];
     },
+    opts?: {
+      slicer?: 'bambu_studio' | 'orcaslicer' | null;
+      printer_id?: number | null;
+    },
   ) => {
     const qs = new URLSearchParams();
     if (plateId !== undefined) qs.set('plate_id', String(plateId));
@@ -4908,6 +4919,8 @@ export const api = {
       qs.set('process_name', bundle.process_name);
       qs.set('filament_names', bundle.filament_names.join(';'));
     }
+    if (opts?.slicer) qs.set('slicer', opts.slicer);
+    if (opts?.printer_id != null) qs.set('printer_id', String(opts.printer_id));
     return request<{
       archive_id: number;
       filename: string;
@@ -6574,6 +6587,10 @@ export const api = {
       process_name: string;
       filament_names: string[];
     },
+    opts?: {
+      slicer?: 'bambu_studio' | 'orcaslicer' | null;
+      printer_id?: number | null;
+    },
   ) => {
     const qs = new URLSearchParams();
     if (plateId !== undefined) qs.set('plate_id', String(plateId));
@@ -6584,6 +6601,8 @@ export const api = {
       qs.set('process_name', bundle.process_name);
       qs.set('filament_names', bundle.filament_names.join(';'));
     }
+    if (opts?.slicer) qs.set('slicer', opts.slicer);
+    if (opts?.printer_id != null) qs.set('printer_id', String(opts.printer_id));
     return request<{
       file_id: number;
       filename: string;
@@ -6604,9 +6623,17 @@ export const api = {
    * the preview slice runs. Returns null on 404 (sidecar doesn't yet
    * have an entry — early race window — or it expired) so the poller
    * can keep trying. */
-  getPreviewSliceProgress: async (requestId: string): Promise<SliceJobProgress | null> => {
+  getPreviewSliceProgress: async (
+    requestId: string,
+    opts?: { slicer?: 'bambu_studio' | 'orcaslicer' | null },
+  ): Promise<SliceJobProgress | null> => {
     try {
-      return await request<SliceJobProgress>(`/slicer/preview-progress/${encodeURIComponent(requestId)}`);
+      const qs = new URLSearchParams();
+      if (opts?.slicer) qs.set('slicer', opts.slicer);
+      const suffix = qs.toString() ? `?${qs}` : '';
+      return await request<SliceJobProgress>(
+        `/slicer/preview-progress/${encodeURIComponent(requestId)}${suffix}`,
+      );
     } catch {
       return null;
     }
@@ -6705,8 +6732,12 @@ export const api = {
   // Unified slicer-preset listing — cloud + local + standard, deduped by name.
   // Used by the SliceModal; see UnifiedPresetsResponse for the shape and
   // backend/app/api/routes/slicer_presets.py for the priority rules.
-  getSlicerPresets: () =>
-    request<UnifiedPresetsResponse>('/slicer/presets'),
+  getSlicerPresets: (opts?: { slicer?: 'bambu_studio' | 'orcaslicer' | null }) => {
+    const qs = new URLSearchParams();
+    if (opts?.slicer) qs.set('slicer', opts.slicer);
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return request<UnifiedPresetsResponse>(`/slicer/presets${suffix}`);
+  },
 
   // Canonical Bambu printer-model registry — "Bambu Lab <model>" → short code.
   // Single source of truth shared with backend (PRINTER_MODEL_MAP); the
@@ -6718,8 +6749,12 @@ export const api = {
   // Slicer Bundles (.bbscfg) — Printer Preset Bundles imported from BambuStudio.
   // Settings → Slicer Bundles uploads/lists/deletes; the SliceModal picks
   // presets by name from a chosen bundle (separate follow-up).
-  listSlicerBundles: () =>
-    request<SlicerBundle[]>('/slicer/bundles'),
+  listSlicerBundles: (opts?: { slicer?: 'bambu_studio' | 'orcaslicer' | null }) => {
+    const qs = new URLSearchParams();
+    if (opts?.slicer) qs.set('slicer', opts.slicer);
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return request<SlicerBundle[]>(`/slicer/bundles${suffix}`);
+  },
   importSlicerBundle: (file: File) => {
     // The /slicer/bundles upload accepts multipart with field name "file"
     // (matches the FastAPI route's UploadFile parameter). Bypass `request`

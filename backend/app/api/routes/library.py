@@ -2747,6 +2747,8 @@ async def _try_preview_slice_filaments(
     printer_name: str | None = None,
     process_name: str | None = None,
     filament_names: list[str] | None = None,
+    slicer: str | None = None,
+    printer_id: int | None = None,
 ) -> list[dict] | None:
     """Run a preview slice via the user's configured sidecar. Same shape as
     the matching helper in archives.py — see that module for rationale.
@@ -2761,16 +2763,20 @@ async def _try_preview_slice_filaments(
     the same profiles the real print will use. Partial context falls back
     to the embedded-settings path so a half-completed Bundle-tier selection
     in the modal doesn't error out.
-    """
 
-    preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
-    if preferred == "orcaslicer":
-        configured = await get_setting(db, "orcaslicer_api_url")
-        api_url = (configured or app_settings.slicer_api_url).strip()
-    elif preferred == "bambu_studio":
-        configured = await get_setting(db, "bambu_studio_api_url")
-        api_url = (configured or app_settings.bambu_studio_api_url).strip()
-    else:
+    ``slicer`` / ``printer_id``: optional override / fleet-printer preference
+    for which sidecar runs the preview (same precedence as slice jobs).
+    """
+    from backend.app.services.slicer_routing import resolve_slicer_sidecar
+
+    try:
+        _, api_url = await resolve_slicer_sidecar(
+            db,
+            override=slicer,
+            printer_id=printer_id,
+            require_url=False,
+        )
+    except HTTPException:
         return None
     if not api_url:
         return None
@@ -2807,6 +2813,8 @@ async def get_library_file_filament_requirements(
     printer_name: str | None = None,
     process_name: str | None = None,
     filament_names: str | None = None,
+    slicer: str | None = None,
+    printer_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_READ)),
 ):
@@ -2946,6 +2954,8 @@ async def get_library_file_filament_requirements(
                         printer_name=printer_name,
                         process_name=process_name,
                         filament_names=parsed_filament_names,
+                        slicer=slicer,
+                        printer_id=printer_id,
                     )
                     if preview is not None:
                         used_slot_ids = {f["slot_id"] for f in preview}
@@ -3352,24 +3362,19 @@ async def _run_slicer_with_fallback(
         filament_jsons = [
             _ensure_preset_compatible_with_printer(fj, presets["printer"], kind="filament") for fj in filament_jsons
         ]
-    else:
-        preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
 
-    # Slicer routing — pick the sidecar URL by preferred_slicer.
-    # The per-install URL setting (Settings UI → Slicer card) wins; an
-    # empty value falls back to the SLICER_API_URL / BAMBU_STUDIO_API_URL
-    # env defaults defined in core/config.py.
-    if preferred == "orcaslicer":
-        configured = await get_setting(db, "orcaslicer_api_url")
-        api_url = (configured or app_settings.slicer_api_url).strip()
-    elif preferred == "bambu_studio":
-        configured = await get_setting(db, "bambu_studio_api_url")
-        api_url = (configured or app_settings.bambu_studio_api_url).strip()
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown preferred_slicer setting: '{preferred}'. Expected 'orcaslicer' or 'bambu_studio'.",
-        )
+    # Slicer routing — request override → printer preference → global default.
+    # URL comes from the matching Settings field, falling back to
+    # SLICER_API_URL / BAMBU_STUDIO_API_URL env defaults in core/config.py.
+    from backend.app.services.slicer_routing import resolve_slicer_sidecar
+
+    _, api_url = await resolve_slicer_sidecar(
+        db,
+        override=request.slicer,
+        printer_id=request.printer_id,
+        require_url=True,
+    )
+    assert api_url is not None  # require_url=True raises on missing URL
 
     # Note: an earlier version of this code stripped Metadata/project_settings.
     # config + model_settings.config + slice_info.config + cut_information.xml
