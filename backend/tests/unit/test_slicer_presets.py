@@ -340,23 +340,23 @@ class TestFetchBundledPresets:
 
     @pytest.mark.asyncio
     async def test_no_sidecar_url_returns_empty(self):
-        sp._bundled_cache = None
-        with patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=None)):
+        sp._bundled_cache = {}
+        with patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=(None, None))):
             slots = await sp._fetch_bundled_presets(MagicMock())
         assert slots == {"printer": [], "process": [], "filament": []}
         # No URL means no useful cache result either — second call should
         # try again (so users who configure a URL mid-session see results).
-        assert sp._bundled_cache is None
+        assert sp._bundled_cache == {}
 
     @pytest.mark.asyncio
     async def test_sidecar_error_returns_empty(self):
-        sp._bundled_cache = None
+        sp._bundled_cache = {}
         svc_mock = MagicMock()
         svc_mock.list_bundled_profiles = AsyncMock(side_effect=sp.SlicerApiError("boom"))
         svc_mock.__aenter__ = AsyncMock(return_value=svc_mock)
         svc_mock.__aexit__ = AsyncMock(return_value=False)
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://nope")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://nope"))),
             patch.object(sp, "SlicerApiService", return_value=svc_mock),
         ):
             slots = await sp._fetch_bundled_presets(MagicMock())
@@ -364,7 +364,7 @@ class TestFetchBundledPresets:
 
     @pytest.mark.asyncio
     async def test_happy_path_shapes_response(self):
-        sp._bundled_cache = None
+        sp._bundled_cache = {}
         svc_mock = MagicMock()
         svc_mock.list_bundled_profiles = AsyncMock(
             return_value={
@@ -382,7 +382,7 @@ class TestFetchBundledPresets:
         svc_mock.__aenter__ = AsyncMock(return_value=svc_mock)
         svc_mock.__aexit__ = AsyncMock(return_value=False)
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc_mock),
         ):
             slots = await sp._fetch_bundled_presets(MagicMock())
@@ -397,16 +397,21 @@ class TestFetchBundledPresets:
     async def test_cache_hit_skips_sidecar(self):
         """A second call within TTL must serve from the cached entry and not
         re-hit the sidecar HTTP."""
-        sp._bundled_cache = (
-            time.monotonic(),
-            {
-                "printer": [UnifiedPreset(id="Cached", name="Cached", source="standard")],
-                "process": [],
-                "filament": [],
-            },
-        )
+        sp._bundled_cache = {
+            "bambu_studio": (
+                time.monotonic(),
+                {
+                    "printer": [UnifiedPreset(id="Cached", name="Cached", source="standard")],
+                    "process": [],
+                    "filament": [],
+                },
+            )
+        }
         # If `SlicerApiService` is constructed at all we've missed the cache.
-        with patch.object(sp, "SlicerApiService", side_effect=AssertionError("cache miss!")):
+        with (
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
+            patch.object(sp, "SlicerApiService", side_effect=AssertionError("cache miss!")),
+        ):
             slots = await sp._fetch_bundled_presets(MagicMock())
         assert slots["printer"][0].name == "Cached"
 
@@ -433,7 +438,8 @@ class TestResolveSlicerApiUrl:
             "backend.app.api.routes.settings.get_setting",
             new=fake_get_setting,
         ):
-            url = await sp._resolve_slicer_api_url(MagicMock())
+            slicer, url = await sp._resolve_slicer_api_url(MagicMock())
+        assert slicer == "bambu_studio"
         assert url == "http://bambu-studio-api:3000"
 
     @pytest.mark.asyncio
@@ -448,7 +454,8 @@ class TestResolveSlicerApiUrl:
             "backend.app.api.routes.settings.get_setting",
             new=fake_get_setting,
         ):
-            url = await sp._resolve_slicer_api_url(MagicMock())
+            slicer, url = await sp._resolve_slicer_api_url(MagicMock())
+        assert slicer == "orcaslicer"
         assert url == "http://orca-slicer-api:3000"
 
     @pytest.mark.asyncio
@@ -466,7 +473,8 @@ class TestResolveSlicerApiUrl:
             "backend.app.api.routes.settings.get_setting",
             new=fake_get_setting,
         ):
-            url = await sp._resolve_slicer_api_url(MagicMock())
+            slicer, url = await sp._resolve_slicer_api_url(MagicMock())
+        assert slicer == "bambu_studio"
         assert url == "http://bambu-default:3000"
 
     @pytest.mark.asyncio
@@ -483,7 +491,8 @@ class TestResolveSlicerApiUrl:
             "backend.app.api.routes.settings.get_setting",
             new=fake_get_setting,
         ):
-            url = await sp._resolve_slicer_api_url(MagicMock())
+            slicer, url = await sp._resolve_slicer_api_url(MagicMock())
+        assert slicer is None
         assert url is None
 
 
@@ -524,7 +533,7 @@ class TestBundleRoutes:
             import_bundle=AsyncMock(return_value=self.SAMPLE_SUMMARY),
         )
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc),
         ):
             file = UploadFile(filename="H2D.bbscfg", file=BytesIO(b"PK\x03\x04"))
@@ -542,7 +551,7 @@ class TestBundleRoutes:
         from fastapi import HTTPException, UploadFile
 
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=None)),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=(None, None))),
             pytest.raises(HTTPException) as exc,
         ):
             await sp.import_slicer_bundle(
@@ -559,7 +568,7 @@ class TestBundleRoutes:
         from fastapi import HTTPException, UploadFile
 
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             pytest.raises(HTTPException) as exc,
         ):
             await sp.import_slicer_bundle(
@@ -579,7 +588,7 @@ class TestBundleRoutes:
             import_bundle=AsyncMock(side_effect=sp.SlicerInputError("bad zip")),
         )
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc),
             caplog.at_level("WARNING", logger="backend.app.api.routes.slicer_presets"),
             pytest.raises(HTTPException) as exc,
@@ -606,7 +615,7 @@ class TestBundleRoutes:
             import_bundle=AsyncMock(side_effect=sp.SlicerApiUnavailableError("offline")),
         )
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc),
             pytest.raises(HTTPException) as exc,
         ):
@@ -623,7 +632,7 @@ class TestBundleRoutes:
             list_bundles=AsyncMock(return_value=[self.SAMPLE_SUMMARY]),
         )
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc),
         ):
             result = await sp.list_slicer_bundles(db=MagicMock(), _=None)
@@ -635,7 +644,7 @@ class TestBundleRoutes:
         # Differs from import: list returns [] instead of 503 so the
         # SliceModal still renders cleanly when no sidecar is configured
         # (matches bundled-tier behaviour above).
-        with patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=None)):
+        with patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=(None, None))):
             result = await sp.list_slicer_bundles(db=MagicMock(), _=None)
         assert result == []
 
@@ -647,7 +656,7 @@ class TestBundleRoutes:
             list_bundles=AsyncMock(side_effect=sp.SlicerApiUnavailableError("offline")),
         )
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc),
             pytest.raises(HTTPException) as exc,
         ):
@@ -662,7 +671,7 @@ class TestBundleRoutes:
             get_bundle=AsyncMock(side_effect=sp.BundleNotFoundError("not found")),
         )
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc),
             pytest.raises(HTTPException) as exc,
         ):
@@ -673,9 +682,9 @@ class TestBundleRoutes:
     async def test_delete_bundle_204(self):
         # delete returns None on success; FastAPI sends 204 because the route
         # declares status_code=204.
-        svc = self._patched_service(delete_bundle=AsyncMock(return_value=None))
+        svc = self._patched_service(delete_bundle=AsyncMock(return_value=(None, None)))
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc),
         ):
             result = await sp.delete_slicer_bundle("abc", db=MagicMock(), _=None)
@@ -690,7 +699,7 @@ class TestBundleRoutes:
             delete_bundle=AsyncMock(side_effect=sp.BundleNotFoundError("not found")),
         )
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=("bambu_studio", "http://ok"))),
             patch.object(sp, "SlicerApiService", return_value=svc),
             pytest.raises(HTTPException) as exc,
         ):

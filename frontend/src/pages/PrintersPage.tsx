@@ -6980,6 +6980,7 @@ function AddPrinterModal({
     model: '',
     location: '',
     auto_archive: true,
+    preferred_slicer: null,
     reconnect_interval_seconds: 30,
     external_camera_url: '',
   });
@@ -7844,6 +7845,35 @@ function AddPrinterModal({
               </label>
             </div>
             <div>
+              <label htmlFor="preferred_slicer" className="block text-sm text-bambu-gray mb-1">
+                {t('printers.modal.preferredSlicer', 'Preferred Slicer')}
+              </label>
+              <div className="relative">
+                <select
+                  id="preferred_slicer"
+                  value={form.preferred_slicer ?? ''}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      preferred_slicer: (e.target.value || null) as PrinterCreate['preferred_slicer'],
+                    })
+                  }
+                  className="w-full px-3 py-2 pr-10 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"
+                >
+                  <option value="">{t('printers.modal.preferredSlicerDefault', 'Default (use Settings)')}</option>
+                  <option value="bambu_studio">{t('settings.slicerBambuStudio')}</option>
+                  <option value="orcaslicer">{t('settings.slicerOrcaSlicer')}</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray pointer-events-none" />
+              </div>
+              <p className="text-xs text-bambu-gray mt-1">
+                {t(
+                  'printers.modal.preferredSlicerHelp',
+                  'When Use Slicer API is on, this printer prefers the selected engine unless the Slice modal overrides it.',
+                )}
+              </p>
+            </div>
+            <div>
               <label htmlFor="reconnect_interval_seconds" className="block text-sm text-bambu-gray mb-1">
                 Offline reconnect interval (seconds)
               </label>
@@ -8223,6 +8253,7 @@ function EditPrinterModal({
     location: printer.location || '',
     power_watts: printer.power_watts != null ? String(printer.power_watts) : '',
     auto_archive: printer.auto_archive,
+    preferred_slicer: printer.preferred_slicer ?? null,
     reconnect_interval_seconds: printer.reconnect_interval_seconds ?? 30,
     prusa_link_api_auth_mode: parsePrusaLinkApiAuthMode(printer.provider_options),
   });
@@ -8260,6 +8291,7 @@ function EditPrinterModal({
       // Empty clears the value (energy estimate falls back to smart-plug history)
       power_watts: form.power_watts.trim() === '' ? null : Math.max(0, Number(form.power_watts)) || null,
       auto_archive: form.auto_archive,
+      preferred_slicer: form.preferred_slicer,
       reconnect_interval_seconds: form.reconnect_interval_seconds,
     };
     if (isPrusaLinkProvider) {
@@ -8455,6 +8487,35 @@ function EditPrinterModal({
               <label htmlFor="edit_auto_archive" className="text-sm text-bambu-gray">
                 {t('printers.modal.autoArchiveLabel')}
               </label>
+            </div>
+            <div>
+              <label htmlFor="edit_preferred_slicer" className="block text-sm text-bambu-gray mb-1">
+                {t('printers.modal.preferredSlicer', 'Preferred Slicer')}
+              </label>
+              <div className="relative">
+                <select
+                  id="edit_preferred_slicer"
+                  value={form.preferred_slicer ?? ''}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      preferred_slicer: (e.target.value || null) as Printer['preferred_slicer'],
+                    })
+                  }
+                  className="w-full px-3 py-2 pr-10 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"
+                >
+                  <option value="">{t('printers.modal.preferredSlicerDefault', 'Default (use Settings)')}</option>
+                  <option value="bambu_studio">{t('settings.slicerBambuStudio')}</option>
+                  <option value="orcaslicer">{t('settings.slicerOrcaSlicer')}</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray pointer-events-none" />
+              </div>
+              <p className="text-xs text-bambu-gray mt-1">
+                {t(
+                  'printers.modal.preferredSlicerHelp',
+                  'When Use Slicer API is on, this printer prefers the selected engine unless the Slice modal overrides it.',
+                )}
+              </p>
             </div>
             <div>
               <label htmlFor="edit_reconnect_interval_seconds" className="block text-sm text-bambu-gray mb-1">

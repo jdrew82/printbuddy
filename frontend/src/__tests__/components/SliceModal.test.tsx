@@ -27,8 +27,12 @@ vi.mock('../../api/client', () => ({
     getLibraryFileFilamentRequirements: vi.fn(),
     getArchiveFilamentRequirements: vi.fn(),
     listSlicerBundles: vi.fn(),
-    getSettings: vi.fn().mockResolvedValue({}),
+    getSettings: vi.fn().mockResolvedValue({ preferred_slicer: 'bambu_studio' }),
     updateSettings: vi.fn().mockResolvedValue({}),
+    getPrinters: vi.fn().mockResolvedValue([]),
+    getAssignments: vi.fn().mockResolvedValue([]),
+    getSlicerPrinterModels: vi.fn().mockResolvedValue({}),
+    getPreviewSliceProgress: vi.fn().mockResolvedValue(null),
   },
 }));
 
@@ -85,6 +89,11 @@ function renderWithTracker(props: Parameters<typeof SliceModal>[0]) {
 describe('SliceModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ preferred_slicer: 'bambu_studio' });
+    (api.getPrinters as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.getAssignments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.getSlicerPrinterModels as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (api.getPreviewSliceProgress as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     mockApi.getSlicerPresets.mockResolvedValue(fullThreeTier);
     mockApi.getSliceJob.mockResolvedValue({
       job_id: 42,

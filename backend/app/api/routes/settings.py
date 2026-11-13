@@ -217,18 +217,16 @@ def sidecar_revision_status(payload: dict) -> tuple[str | None, bool | None]:
 
 async def _resolve_effective_slicer_sidecar(db: AsyncSession) -> tuple[str, str]:
     """Resolve the selected slicer and sidecar URL using the normal precedence."""
-    preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
-    if preferred == "orcaslicer":
-        configured = await get_setting(db, "orcaslicer_api_url")
-        url = (configured or app_settings.slicer_api_url).strip()
-    elif preferred == "bambu_studio":
-        configured = await get_setting(db, "bambu_studio_api_url")
-        url = (configured or app_settings.bambu_studio_api_url).strip()
-    else:
-        raise ValueError("Invalid preferred slicer configuration")
-    if not url:
+    from backend.app.services.slicer_routing import resolve_slicer_sidecar
+
+    try:
+        slicer, url = await resolve_slicer_sidecar(db, require_url=True)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else "Invalid preferred slicer configuration"
+        raise ValueError(detail) from exc
+    if slicer is None or not url:
         raise ValueError("No slicer sidecar is configured")
-    return preferred, url
+    return slicer, url
 
 
 async def get_external_login_url(db: AsyncSession) -> str:

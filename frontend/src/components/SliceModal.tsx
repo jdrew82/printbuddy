@@ -240,9 +240,11 @@ function fromRefValue(raw: string): PresetRef | null {
 function FilamentAnalysisSpinner({
   requestId,
   sourceName,
+  slicer,
 }: {
   requestId: string;
   sourceName: string;
+  slicer?: 'bambu_studio' | 'orcaslicer' | null;
 }) {
   const { t } = useTranslation();
   const { showPersistentToast, dismissToast } = useToast();
@@ -271,14 +273,14 @@ function FilamentAnalysisSpinner({
     let cancelled = false;
     const id = setInterval(async () => {
       if (cancelled) return;
-      const snap = await api.getPreviewSliceProgress(requestId);
+      const snap = await api.getPreviewSliceProgress(requestId, { slicer });
       if (!cancelled && snap) setProgress(snap);
     }, 1000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [requestId]);
+  }, [requestId, slicer]);
 
   // Mirror the spinner's contents into a persistent toast so the user
   // sees activity even when their cursor is elsewhere on the page.
@@ -414,6 +416,19 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // incompatible with high-temp filaments like ABS / ASA / PC, and the
   // user had no way to switch plates without cloning the preset.
   const [bedType, setBedType] = useState<string | null>(null);
+  // Which slicer-api engine runs this job. Initialized from Settings, then
+  // may adopt a correlated fleet printer's preferred_slicer until the user
+  // picks explicitly in the modal.
+  const [selectedSlicer, setSelectedSlicer] = useState<'bambu_studio' | 'orcaslicer'>(
+    'bambu_studio',
+  );
+  const [slicerTouched, setSlicerTouched] = useState(false);
+
+  const settingsQuery = useQuery({
+    queryKey: ['settings'],
+    queryFn: api.getSettings,
+    staleTime: 60_000,
+  });
 
   const platesQuery = useQuery({
     queryKey: ['slicePlates', source.kind, source.id],
@@ -451,12 +466,25 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
     [source.kind, source.id, effectivePlateId],
   );
   const filamentReqsQuery = useQuery({
-    queryKey: ['sliceFilamentReqs', source.kind, source.id, effectivePlateId],
+    queryKey: ['sliceFilamentReqs', source.kind, source.id, effectivePlateId, selectedSlicer],
     queryFn: async () => {
+      const opts = { slicer: selectedSlicer };
       if (source.kind === 'libraryFile') {
-        return api.getLibraryFileFilamentRequirements(source.id, effectivePlateId, previewRequestId);
+        return api.getLibraryFileFilamentRequirements(
+          source.id,
+          effectivePlateId,
+          previewRequestId,
+          undefined,
+          opts,
+        );
       }
-      return api.getArchiveFilamentRequirements(source.id, effectivePlateId, previewRequestId);
+      return api.getArchiveFilamentRequirements(
+        source.id,
+        effectivePlateId,
+        previewRequestId,
+        undefined,
+        opts,
+      );
     },
     enabled: !needsPlatePicker,
     staleTime: 60_000,
@@ -485,8 +513,8 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   }, [sliceAllPlates, filamentReqsQuery.data]);
 
   const presetsQuery = useQuery({
-    queryKey: ['slicerPresets'],
-    queryFn: () => api.getSlicerPresets(),
+    queryKey: ['slicerPresets', selectedSlicer],
+    queryFn: () => api.getSlicerPresets({ slicer: selectedSlicer }),
     staleTime: 60_000,
     // Don't fetch presets while the plate picker is on screen — saves a
     // round-trip if the user cancels out of the plate step.
@@ -497,8 +525,8 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // configured / no bundles imported yet; the bundle picker hides itself
   // in that case so users without bundles see the original modal layout.
   const bundlesQuery = useQuery({
-    queryKey: ['slicerBundles'],
-    queryFn: api.listSlicerBundles,
+    queryKey: ['slicerBundles', selectedSlicer],
+    queryFn: () => api.listSlicerBundles({ slicer: selectedSlicer }),
     staleTime: 60_000,
     enabled: !platesQuery.isLoading && !needsPlatePicker,
     // Bundle listing is a hard 503 when the sidecar is offline; don't
@@ -537,6 +565,51 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
     if (!presetsQuery.data || !printerPreset) return null;
     return findPreset(presetsQuery.data, printerPreset, 'printer')?.name ?? null;
   }, [presetsQuery.data, printerPreset]);
+
+  const correlatedFleetPrinter = useMemo(() => {
+    if (!selectedPrinterName) return null;
+    const normalizedPreset = selectedPrinterName.toLowerCase();
+    return (
+      (printersQuery.data ?? []).find((printer) => {
+        const candidates = [printer.name, printer.model]
+          .map((v) => (v ?? '').toLowerCase())
+          .filter(Boolean);
+        return candidates.some(
+          (candidate) => normalizedPreset.includes(candidate) || candidate.includes(normalizedPreset),
+        );
+      }) ?? null
+    );
+  }, [printersQuery.data, selectedPrinterName]);
+
+  // Resolve active slicer: Settings default, then fleet-printer preference,
+  // until the user overrides in this modal.
+  useEffect(() => {
+    if (slicerTouched) return;
+    const fromPrinter = correlatedFleetPrinter?.preferred_slicer ?? null;
+    const fromSettings = settingsQuery.data?.preferred_slicer ?? 'bambu_studio';
+    const next = fromPrinter ?? fromSettings;
+    setSelectedSlicer(next === 'orcaslicer' ? 'orcaslicer' : 'bambu_studio');
+  }, [slicerTouched, correlatedFleetPrinter, settingsQuery.data?.preferred_slicer]);
+
+  // Engine change invalidates Standard presets / bundles — clear incompatible
+  // process/filament/bundle picks so auto-defaults re-run against the new list.
+  // Keep the printer preset when the change came from a fleet-printer
+  // preference (not a manual override); clearing it would drop the correlation
+  // and bounce the slicer back to the Settings default.
+  useEffect(() => {
+    setSelectedBundleId(null);
+    setBundleProcessName(null);
+    setBundleFilamentNames([]);
+    setProcessPreset(null);
+    setFilamentPresets([]);
+    if (slicerTouched) {
+      setPrinterPreset(null);
+    }
+    // Only re-run when the engine id changes; slicerTouched is read for the
+    // printer-clear decision at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSlicer]);
+
   const loadedSpoolForSelectedPrinter = useMemo(() => {
     const loaded = (assignmentsQuery.data ?? []).filter((a) => a.ams_id === -1 && a.tray_id === 0 && a.spool);
     if (loaded.length === 0) return null;
@@ -703,6 +776,8 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       };
       return {
         bundle: bundleSpec,
+        slicer: selectedSlicer,
+        ...(correlatedFleetPrinter ? { printer_id: correlatedFleetPrinter.id } : {}),
         ...(plate != null ? { plate } : {}),
         ...(plate === 0 && splitPlates ? { split_plates: true } : {}),
         // Bed-type override (#1337) also flows through the bundle path —
@@ -723,6 +798,8 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       process_preset: processPreset,
       filament_preset: filamentPresets[0] as PresetRef,
       filament_presets: filamentPresets as PresetRef[],
+      slicer: selectedSlicer,
+      ...(correlatedFleetPrinter ? { printer_id: correlatedFleetPrinter.id } : {}),
       ...(plate != null ? { plate } : {}),
       ...(plate === 0 && splitPlates ? { split_plates: true } : {}),
       ...(bedType != null ? { bed_type: bedType } : {}),
@@ -801,6 +878,31 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div>
+            <label className="block text-sm text-bambu-gray mb-1" htmlFor="slice-slicer">
+              {t('slice.slicer', 'Slicer')}
+            </label>
+            <select
+              id="slice-slicer"
+              value={selectedSlicer}
+              onChange={(e) => {
+                setSlicerTouched(true);
+                setSelectedSlicer(e.target.value as 'bambu_studio' | 'orcaslicer');
+              }}
+              disabled={isEnqueuing}
+              className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+            >
+              <option value="bambu_studio">{t('settings.slicerBambuStudio')}</option>
+              <option value="orcaslicer">{t('settings.slicerOrcaSlicer')}</option>
+            </select>
+            <p className="text-xs text-bambu-gray mt-1">
+              {t(
+                'slice.slicerHelp',
+                'Which sidecar engine runs this slice. Presets and bundles reload when you change it.',
+              )}
+            </p>
+          </div>
+
           {/* Preset listing loader — printer/process dropdowns can't render
               without it. Plate query reuses the same spinner since it's
               also blocking. */}
@@ -902,6 +1004,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
                 <FilamentAnalysisSpinner
                   requestId={previewRequestId}
                   sourceName={source.filename}
+                  slicer={selectedSlicer}
                 />
               ) : isBundleMode && selectedBundle ? (
                 filamentSlots.map((slot, idx) => {

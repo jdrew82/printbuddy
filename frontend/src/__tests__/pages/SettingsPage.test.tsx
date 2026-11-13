@@ -222,6 +222,24 @@ describe('SettingsPage', () => {
       });
     });
 
+    it('shows both sidecar URL fields when Use Slicer API is on', async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get('/api/v1/settings/', () => HttpResponse.json({ ...mockSettings, use_slicer_api: true })),
+      );
+      render(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Workflow')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('Workflow'));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Bambu Studio sidecar URL')).toBeInTheDocument();
+        expect(screen.getByLabelText('OrcaSlicer sidecar URL')).toBeInTheDocument();
+      });
+    });
+
     it('tests the enabled slicer API connection and disables the button while pending', async () => {
       const user = userEvent.setup();
       let completeRequest: (() => void) | undefined;

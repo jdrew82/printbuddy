@@ -138,6 +138,21 @@ class SliceRequest(BaseModel):
             "process preset unchanged (#1337)."
         ),
     )
+    slicer: Literal["bambu_studio", "orcaslicer"] | None = Field(
+        default=None,
+        description=(
+            "Which slicer-api sidecar to use for this request. When set, overrides "
+            "per-printer and global preferred_slicer. None ⇒ resolve via printer "
+            "preference then Settings default."
+        ),
+    )
+    printer_id: int | None = Field(
+        default=None,
+        description=(
+            "Optional fleet printer id whose preferred_slicer should apply when "
+            "``slicer`` is omitted."
+        ),
+    )
 
     @model_validator(mode="after")
     def normalise_preset_refs(self) -> "SliceRequest":

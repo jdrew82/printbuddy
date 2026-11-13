@@ -203,6 +203,7 @@ class PrinterBase(BaseModel):
     location: str | None = None  # Group/location name
     power_watts: float | None = Field(default=None, ge=0, le=10000)  # Avg power while printing (W)
     auto_archive: bool = True
+    preferred_slicer: Literal["bambu_studio", "orcaslicer"] | None = None
     reconnect_interval_seconds: int = Field(default=30, ge=10, le=3600)
     external_camera_url: str | None = None
     external_camera_type: str | None = None  # "mjpeg", "rtsp", "snapshot", "usb"
@@ -241,6 +242,7 @@ class PrinterUpdate(BaseModel):
     power_watts: float | None = Field(default=None, ge=0, le=10000)  # null clears
     is_active: bool | None = None
     auto_archive: bool | None = None
+    preferred_slicer: Literal["bambu_studio", "orcaslicer"] | None = None
     reconnect_interval_seconds: int | None = Field(default=None, ge=10, le=3600)
     print_hours_offset: float | None = None
     external_camera_url: str | None = None
@@ -290,6 +292,7 @@ class PrinterResponse(PrinterBase):
             "power_watts": getattr(printer, "power_watts", None),
             "custom_image_filename": getattr(printer, "custom_image_filename", None),
             "auto_archive": printer.auto_archive,
+            "preferred_slicer": getattr(printer, "preferred_slicer", None),
             "reconnect_interval_seconds": getattr(printer, "reconnect_interval_seconds", 30),
             "external_camera_url": effective_camera.url,
             "external_camera_type": effective_camera.camera_type,

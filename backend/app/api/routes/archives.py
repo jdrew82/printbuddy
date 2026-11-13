@@ -3339,6 +3339,8 @@ async def _try_preview_slice_filaments(
     printer_name: str | None = None,
     process_name: str | None = None,
     filament_names: list[str] | None = None,
+    slicer: str | None = None,
+    printer_id: int | None = None,
 ) -> list[dict] | None:
     """Run a preview slice via the user's configured sidecar so the filament
     list endpoint can return real per-plate filaments for unsliced project
@@ -3349,18 +3351,21 @@ async def _try_preview_slice_filaments(
     Bundle context (id + preset names) is forwarded to the preview helper
     so the preview can mirror the real-print profile triplet when supplied
     — see ``slice_preview.get_preview_filaments`` for the full contract.
-    """
-    from backend.app.api.routes.settings import get_setting
-    from backend.app.services.slice_preview import get_preview_filaments
 
-    preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
-    if preferred == "orcaslicer":
-        configured = await get_setting(db, "orcaslicer_api_url")
-        api_url = (configured or settings.slicer_api_url).strip()
-    elif preferred == "bambu_studio":
-        configured = await get_setting(db, "bambu_studio_api_url")
-        api_url = (configured or settings.bambu_studio_api_url).strip()
-    else:
+    ``slicer`` / ``printer_id``: optional override / fleet-printer preference
+    for which sidecar runs the preview (same precedence as slice jobs).
+    """
+    from backend.app.services.slice_preview import get_preview_filaments
+    from backend.app.services.slicer_routing import resolve_slicer_sidecar
+
+    try:
+        _, api_url = await resolve_slicer_sidecar(
+            db,
+            override=slicer,
+            printer_id=printer_id,
+            require_url=False,
+        )
+    except HTTPException:
         return None
     if not api_url:
         return None
@@ -3399,6 +3404,8 @@ async def get_filament_requirements(
     printer_name: str | None = None,
     process_name: str | None = None,
     filament_names: str | None = None,
+    slicer: str | None = None,
+    printer_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.ARCHIVES_READ),
 ):
@@ -3535,6 +3542,8 @@ async def get_filament_requirements(
                         printer_name=printer_name,
                         process_name=process_name,
                         filament_names=parsed_filament_names,
+                        slicer=slicer,
+                        printer_id=printer_id,
                     )
                     if preview is not None:
                         used_slot_ids = {f["slot_id"] for f in preview}

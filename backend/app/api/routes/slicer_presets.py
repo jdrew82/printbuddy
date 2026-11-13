@@ -27,7 +27,6 @@ from backend.app.api.routes.orca_cloud import (
     _load_credentials as _load_orca_credentials,
 )
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
-from backend.app.core.config import settings as app_settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.local_preset import LocalPreset
@@ -61,10 +60,11 @@ router = APIRouter(prefix="/slicer", tags=["Slicer Presets"])
 # In-process cache for the bundled-profile list. The slicer sidecar walks a
 # read-only filesystem inside its own container, so the list only changes
 # across sidecar rebuilds — a long TTL is safe and avoids a sidecar round-trip
-# on every modal open. Per-user cache is unnecessary because bundled profiles
-# are global.
+# on every modal open. Keyed by slicer id so switching engines does not return
+# the other sidecar's Standard list. Per-user cache is unnecessary because
+# bundled profiles are global per engine.
 _BUNDLED_TTL_S = 3600.0
-_bundled_cache: tuple[float, dict[str, list[UnifiedPreset]]] | None = None
+_bundled_cache: dict[str, tuple[float, dict[str, list[UnifiedPreset]]]] = {}
 
 # Per-user cache for the cloud preset list. Cache key is (user_id, token_hash):
 # keying on the token hash means a logout/login or token-change automatically
@@ -303,14 +303,20 @@ def _first_scalar(value: object) -> str | None:
     return None
 
 
-async def _fetch_bundled_presets(db: AsyncSession) -> dict[str, list[UnifiedPreset]]:
+async def _fetch_bundled_presets(
+    db: AsyncSession,
+    *,
+    slicer: str | None = None,
+) -> dict[str, list[UnifiedPreset]]:
     """Standard slicer-bundled profiles via the sidecar's /profiles/bundled."""
     global _bundled_cache
     now = time.monotonic()
-    if _bundled_cache and now - _bundled_cache[0] < _BUNDLED_TTL_S:
-        return _bundled_cache[1]
+    slicer_id, api_url = await _resolve_slicer_api_url(db, slicer=slicer)
+    cache_key = slicer_id or "unknown"
+    cached = _bundled_cache.get(cache_key)
+    if cached and now - cached[0] < _BUNDLED_TTL_S:
+        return cached[1]
 
-    api_url = await _resolve_slicer_api_url(db)
     if not api_url:
         # No sidecar configured at all — return empty rather than caching, so
         # users who configure one mid-session see results on next open.
@@ -348,38 +354,29 @@ async def _fetch_bundled_presets(db: AsyncSession) -> dict[str, list[UnifiedPres
                 UnifiedPreset(id=name, name=name, source="standard", **extra),
             )
 
-    _bundled_cache = (now, slots)
+    _bundled_cache[cache_key] = (now, slots)
     return slots
 
 
-async def _resolve_slicer_api_url(db: AsyncSession) -> str | None:
-    """Pick the sidecar URL the bundled-listing fetch should hit.
+async def _resolve_slicer_api_url(
+    db: AsyncSession,
+    *,
+    slicer: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Pick the sidecar URL the bundled-listing / bundles fetch should hit.
 
-    Mirrors the slice route's resolution at ``library.py:_run_slicer_with_fallback``:
-    the user's ``preferred_slicer`` setting decides which sidecar Printbuddy
-    talks to, and the per-install URL setting overrides the env default.
-    A user who prefers Bambu Studio gets the *bambu-studio-api* sidecar's
-    bundled list; a user who prefers OrcaSlicer gets the *orca-slicer-api*
-    sidecar's bundled list. Without this branch the listing would always
-    hit OrcaSlicer (port 3003) even for BambuStudio installs (port 3001),
-    leaving the Standard tier permanently empty for them.
+    Uses shared ``resolve_slicer_sidecar`` precedence (request override →
+    printer preference → global default). Returns ``(slicer_id, url)``; either
+    may be ``None`` when the preference is unknown or no URL is configured so
+    the Standard tier / bundle list can degrade empty instead of 400.
     """
-    from backend.app.api.routes.settings import get_setting
+    from backend.app.services.slicer_routing import resolve_slicer_sidecar
 
-    preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
-    if preferred == "orcaslicer":
-        configured = await get_setting(db, "orcaslicer_api_url")
-        url = (configured or app_settings.slicer_api_url).strip()
-    elif preferred == "bambu_studio":
-        configured = await get_setting(db, "bambu_studio_api_url")
-        url = (configured or app_settings.bambu_studio_api_url).strip()
-    else:
-        # Unknown preference — return None so the bundled tier is empty
-        # rather than crashing the modal. The slice route raises 400 here;
-        # we degrade silently because the modal's listing is informational.
-        logger.warning("Unknown preferred_slicer setting: %r — bundled tier disabled", preferred)
-        return None
-    return url or None
+    return await resolve_slicer_sidecar(
+        db,
+        override=slicer,
+        require_url=False,
+    )
 
 
 def _dedupe_by_name(
@@ -474,6 +471,7 @@ def list_printer_models() -> dict[str, str]:
 
 @router.get("/presets", response_model=UnifiedPresetsResponse)
 async def list_unified_presets(
+    slicer: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_UPLOAD),
     api_key_cloud_owner: User | None = Depends(resolve_api_key_cloud_owner),
@@ -491,12 +489,15 @@ async def list_unified_presets(
     owner User via ``resolve_api_key_cloud_owner`` when the key has the
     cloud-access scope, so the cloud tier surfaces correctly for them
     too — matching the slice route (#1182 follow-up).
+
+    ``slicer`` optionally overrides the global preferred_slicer so Standard
+    presets come from the matching sidecar (Bambu vs Orca).
     """
     cloud_token_user = current_user or api_key_cloud_owner
     orca_cloud, orca_cloud_status = await _fetch_orca_cloud_presets(db, cloud_token_user)
     cloud, cloud_status = await _fetch_cloud_presets(db, cloud_token_user)
     local = await _fetch_local_presets(db)
-    standard = await _fetch_bundled_presets(db)
+    standard = await _fetch_bundled_presets(db, slicer=slicer)
 
     cloud, local, standard = _dedupe_by_name(cloud, local, standard)
 
@@ -543,7 +544,7 @@ async def import_slicer_bundle(
     hashes the zip content), so duplicate uploads collapse rather than
     accumulate.
     """
-    api_url = await _resolve_slicer_api_url(db)
+    _, api_url = await _resolve_slicer_api_url(db)
     if not api_url:
         raise HTTPException(status_code=503, detail="No slicer sidecar configured")
 
@@ -590,6 +591,7 @@ async def import_slicer_bundle(
 
 @router.get("/bundles")
 async def list_slicer_bundles(
+    slicer: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_UPLOAD),
 ):
@@ -598,8 +600,11 @@ async def list_slicer_bundles(
     Drives the SliceModal's "Bundle" tier and a Settings panel where
     users can review / delete imported bundles. Returns ``[]`` when the
     sidecar has no bundles imported yet.
+
+    ``slicer`` optionally overrides the global preferred_slicer so the
+    list comes from the matching sidecar.
     """
-    api_url = await _resolve_slicer_api_url(db)
+    _, api_url = await _resolve_slicer_api_url(db, slicer=slicer)
     if not api_url:
         # No sidecar configured: empty list rather than 503 so the modal
         # renders cleanly. Same shape as the bundled-presets fallback.
@@ -621,11 +626,12 @@ async def list_slicer_bundles(
 @router.get("/bundles/{bundle_id}")
 async def get_slicer_bundle(
     bundle_id: str,
+    slicer: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_UPLOAD),
 ):
     """Return one bundle by id. 404 if it doesn't exist on the sidecar."""
-    api_url = await _resolve_slicer_api_url(db)
+    _, api_url = await _resolve_slicer_api_url(db, slicer=slicer)
     if not api_url:
         raise HTTPException(status_code=503, detail="No slicer sidecar configured")
     try:
@@ -643,13 +649,14 @@ async def get_slicer_bundle(
 @router.delete("/bundles/{bundle_id}", status_code=204)
 async def delete_slicer_bundle(
     bundle_id: str,
+    slicer: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_UPLOAD),
 ):
     """Remove a stored bundle from the sidecar. Future slice requests
     referencing this id will fail with 404 from the sidecar.
     """
-    api_url = await _resolve_slicer_api_url(db)
+    _, api_url = await _resolve_slicer_api_url(db, slicer=slicer)
     if not api_url:
         raise HTTPException(status_code=503, detail="No slicer sidecar configured")
     try:
@@ -666,6 +673,7 @@ async def delete_slicer_bundle(
 @router.get("/preview-progress/{request_id}")
 async def get_preview_slice_progress(
     request_id: str,
+    slicer: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_READ),
 ):
@@ -682,10 +690,12 @@ async def get_preview_slice_progress(
 
     Returns the sidecar's snapshot verbatim, or 404 when the request_id
     is unknown / completed and grace-window-expired.
+
+    ``slicer`` optionally targets the same sidecar that started the preview.
     """
     import httpx
 
-    api_url = await _resolve_slicer_api_url(db)
+    _, api_url = await _resolve_slicer_api_url(db, slicer=slicer)
     if not api_url:
         raise HTTPException(status_code=503, detail="No slicer sidecar configured")
     url = f"{api_url}/slice/progress/{request_id}"
