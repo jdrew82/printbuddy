@@ -14,6 +14,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { proxyCdnUrlsInHtml } from '../utils/makerworldCdn';
 import { Button } from './Button';
 import { RichTextEditor } from './RichTextEditor';
 
@@ -94,9 +95,12 @@ export function ProjectPageModal({ archiveId, archiveName, onClose }: ProjectPag
     setEditData({});
   };
 
-  // Sanitize HTML content using DOMPurify
+  // MakerWorld 3MF descriptions are authored HTML with CDN <img> tags.
+  // Proxy those hosts first (CSP blocks hotlinking), then sanitize.
+  // Same pipeline as MakerworldPage — without the proxy step, Project Page
+  // shows empty image boxes for nearly every MakerWorld archive.
   const sanitizeHtml = (html: string) => {
-    return DOMPurify.sanitize(html, {
+    return DOMPurify.sanitize(proxyCdnUrlsInHtml(html), {
       ALLOWED_TAGS: ['p', 'br', 'b', 'strong', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 'figure', 'img'],
       ALLOWED_ATTR: ['href', 'src', 'target', 'rel', 'style'],
       ADD_ATTR: ['target'],
@@ -355,7 +359,7 @@ export function ProjectPageModal({ archiveId, archiveName, onClose }: ProjectPag
                         className="aspect-square rounded-lg overflow-hidden border border-bambu-dark-tertiary hover:border-bambu-green transition-colors"
                       >
                         <img
-                          src={img.url}
+                          src={api.getArchiveProjectImageUrl(archiveId, img.path)}
                           alt={img.name}
                           className="w-full h-full object-cover"
                         />
@@ -402,7 +406,7 @@ export function ProjectPageModal({ archiveId, archiveName, onClose }: ProjectPag
           </button>
 
           <img
-            src={allImages[selectedImageIndex].url}
+            src={api.getArchiveProjectImageUrl(archiveId, allImages[selectedImageIndex].path)}
             alt={allImages[selectedImageIndex].name}
             className="max-w-[90vw] max-h-[90vh] object-contain"
             onClick={(e) => e.stopPropagation()}
