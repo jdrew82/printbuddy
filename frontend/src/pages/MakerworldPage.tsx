@@ -20,6 +20,7 @@ import { SourceSnapshotModal } from '../components/SourceSnapshotModal';
 import { Cog } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import { proxyCdn, proxyCdnUrlsInHtml } from '../utils/makerworldCdn';
 
 // MakerWorld's API payloads are passed through as opaque dicts; these helpers
 // pull known fields out in a type-safe way so a missing/renamed field shows
@@ -29,28 +30,6 @@ function pickString(obj: Record<string, unknown> | undefined, key: string): stri
   return typeof value === 'string' ? value : '';
 }
 
-// Rewrite MakerWorld CDN URLs inside HTML content (design summary, etc.) to
-// use Printbuddy's thumbnail proxy. MakerWorld summaries are authored HTML and
-// commonly contain ``<img src="https://makerworld.bblmw.com/...">`` tags;
-// Printbuddy's img-src CSP only allows ``'self' data: blob:``, so these would
-// otherwise be blocked. Pairs with ``proxyCdn`` below for explicit <img>
-// renders.
-function proxyCdnUrlsInHtml(html: string): string {
-  return html.replace(
-    /(https?:\/\/(?:makerworld|public-cdn)\.bblmw\.com\/[^\s"']+)/gi,
-    (match) => `/api/v1/makerworld/thumbnail?url=${encodeURIComponent(match)}`,
-  );
-}
-
-// MakerWorld CDN images can't be hotlinked — Printbuddy's img-src CSP blocks
-// external hosts. Route them through the /makerworld/thumbnail proxy.
-// Empty string in → empty string out so the ``{coverUrl && ...}`` checks
-// in the render keep short-circuiting.
-function proxyCdn(url: string): string {
-  if (!url) return '';
-  if (!/^https?:\/\/(makerworld|public-cdn)\.bblmw\.com\//i.test(url)) return url;
-  return `/api/v1/makerworld/thumbnail?url=${encodeURIComponent(url)}`;
-}
 function pickNumber(obj: Record<string, unknown> | undefined, key: string): number | null {
   const value = obj?.[key];
   return typeof value === 'number' ? value : null;
